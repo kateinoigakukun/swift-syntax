@@ -106,12 +106,27 @@ extension CompilerPlugin {
   /// Main entry point of the plugin — sets up a communication channel with
   /// the plugin host and runs the main message loop.
   public static func main() throws {
+    #if os(WASI)
+    func getFdFromEnv(_ name: String) -> Int32 {
+      guard let env = getenv(name) else {
+        internalError("Environment variable \(name) not set.")
+      }
+      guard let fd = Int32(String(cString: env)) else {
+        internalError("Invalid file descriptor in environment variable \(name).")
+      }
+      return fd
+    }
+    // Get the input file descriptor from the environment variable since
+    // there is no dup() on WASI.
+    let inputFD = getFdFromEnv("SWIFT_PLUGIN_INPUT_FD")
+    #else
     // Duplicate the `stdin` file descriptor, which we will then use for
     // receiving messages from the plugin host.
     let inputFD = dup(fileno(stdin))
     guard inputFD >= 0 else {
       internalError("Could not duplicate `stdin`: \(describe(errno: errno)).")
     }
+    #endif
 
     // Having duplicated the original standard-input descriptor, we close
     // `stdin` so that attempts by the plugin to read console input (which
@@ -120,6 +135,11 @@ extension CompilerPlugin {
       internalError("Could not close `stdin`: \(describe(errno: errno)).")
     }
 
+    #if os(WASI)
+    // Get the output file descriptor from the environment variable since
+    // there is no dup() on WASI.
+    let outputFD = getFdFromEnv("SWIFT_PLUGIN_OUTPUT_FD")
+    #else
     // Duplicate the `stdout` file descriptor, which we will then use for
     // sending messages to the plugin host.
     let outputFD = dup(fileno(stdout))
@@ -132,6 +152,7 @@ extension CompilerPlugin {
     guard dup2(fileno(stderr), fileno(stdout)) >= 0 else {
       internalError("Could not dup2 `stdout` to `stderr`: \(describe(errno: errno)).")
     }
+    #endif
 
     // Turn off full buffering so printed text appears as soon as possible.
     // Windows is much less forgiving than other platforms.  If line
